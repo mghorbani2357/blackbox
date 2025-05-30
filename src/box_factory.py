@@ -7,11 +7,10 @@ import struct
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 
-from src.key_factory import RSAKey
+from key_factory import RSAKey
 
 
 class BlackBox:
-    slots = list()
 
     def __init__(
             self, key: RSAKey,
@@ -27,15 +26,16 @@ class BlackBox:
         self.slots_count_limit = slots_count_limit
         self.slots_size_limit = slots_size_limit
         self.compression = compression
+        self.slots = list()
 
     def __getitem__(self, slot_index):
-        return lzma.decompress(self[slot_index]) if self.compression else self[slot_index]
+        return self.slots[slot_index]
 
     def __len__(self):
         return len(self.slots)
 
     def put(self, data: bytes):
-        self.slots.append(self.key.encrypt(lzma.compress(data) if self.compression else data))
+        self.slots.append(self.key.encrypt(data))
         while (len(self.slots) > self.slots_count_limit or
                sum([len(slot) for slot in self.slots]) > self.slots_size_limit):
             self.slots.pop(0)
@@ -63,6 +63,9 @@ def encapsulate(black_box: BlackBox) -> bytes:
 
     header_size = struct.pack('I', len(header))
 
+    if black_box.compression:
+        body = lzma.compress(body)
+
     return header_size + header + body
 
 
@@ -82,10 +85,12 @@ def decapsulate(capsule: bytes) -> BlackBox:
 
     black_box.id = header['id']
     header_offset = header_size + 4
+
+    body = lzma.decompress(capsule[header_offset:]) if header['compression'] else capsule[header_offset:]
     body_offset = 0
 
     for i in range(len(header['slots_size'])):
-        black_box.slots.append(capsule[header_offset + body_offset:header_offset + body_offset + header['slots_size'][i]])
+        black_box.slots.append(body[body_offset:body_offset + header['slots_size'][i]])
         body_offset += header['slots_size'][i]
 
     return black_box

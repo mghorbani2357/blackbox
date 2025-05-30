@@ -4,6 +4,10 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 
+def get_max_message_size(public_key):
+    key_size_bytes = public_key.key_size // 8
+    hash_size = hashes.SHA256().digest_size
+    return key_size_bytes - 2 * hash_size - 2
 
 class RSAKey:
     public_key = None
@@ -17,9 +21,7 @@ class RSAKey:
             self.private_key = self.load_private_key(private_key_path, password=password)
 
     @staticmethod
-    def generate_rsa_keys(file_path: str, key_size: int = 3072, pass_phrase: bytes = b''):
-        if key_size < 3072:
-            warnings.warn("Generating key with size lower than 3072 may cause vulnerability to quantum attacks")
+    def generate_rsa_keys(file_path: str, key_size: int = 3072, pass_phrase: bytes = None):
         private_key = rsa.generate_private_key(
             public_exponent=65537,
             key_size=key_size,
@@ -31,7 +33,7 @@ class RSAKey:
             f.write(private_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.BestAvailableEncryption(pass_phrase)
+                encryption_algorithm=serialization.BestAvailableEncryption(pass_phrase) if  pass_phrase not in (b'', '', None) else serialization.NoEncryption()
             ))
 
         with open(f'{file_path}.pub', 'wb') as f:
@@ -53,45 +55,51 @@ class RSAKey:
     def encrypt(self, data: bytes):
         if self.public_key is None:
             raise Exception('Public key is not defined')
-        return self.public_key.encrypt(
-            data,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
+
+        max_chunk_size = get_max_message_size(self.public_key)
+        encrypted_chunks = []
+
+        for i in range(0, len(data), max_chunk_size):
+            chunk = data[i:i + max_chunk_size]
+            encrypted_chunk = self.public_key.encrypt(
+                chunk,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
             )
-        )
+            length_bytes = len(encrypted_chunk).to_bytes(2, byteorder='big')
+            encrypted_chunks.append(length_bytes + encrypted_chunk)
+
+        return b''.join(encrypted_chunks)
 
     def decrypt(self, ciphertext: bytes):
         if self.private_key is None:
             raise Exception('Private key is not defined')
-        return self.private_key.decrypt(
-            ciphertext,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
+        decrypted_chunks = []
+        i = 0
+        data_len = len(ciphertext)
+
+        while i < data_len:
+            # Read the length prefix (2 bytes)
+            chunk_len = int.from_bytes(ciphertext[i:i + 2], byteorder='big')
+            i += 2
+            encrypted_chunk = ciphertext[i:i + chunk_len]
+            i += chunk_len
+
+            decrypted_chunk = self.private_key.decrypt(
+                encrypted_chunk,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
             )
-        )
+            decrypted_chunks.append(decrypted_chunk)
 
+        return b''.join(decrypted_chunks)
 
-# === 🔐 Demo Usage ===
-# if __name__ == "__main__":
-#     passphrase = b'secure-password'
-
-# Step 1: Generate and save keys
-RSAKey.generate_rsa_keys('rsa.key', key_size=4096, pass_phrase=b'test')
-
-# Step 2: Load keys
-# pub_key = load_public_key('rsa.key.pub')
-# priv_key = load_private_key('rsa.key',pass_phrase=passphrase)
-# #
-# # # Step 3: Encrypt data
-# message = b"Top secret message."
-# ciphertext = rsa_encrypt(message, pub_key)
-# print(len(ciphertext))
-# print(f"Encrypted: {ciphertext.hex()}")
-# #
-# # # Step 4: Decrypt data
-# plaintext = rsa_decrypt(ciphertext, priv_key)
-# print(f"Decrypted: {plaintext.decode()}")
+# Todo:
+#   - implement make_file.py
+#   - get output file to store the output or print the data
