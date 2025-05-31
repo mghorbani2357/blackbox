@@ -3,6 +3,7 @@ import lzma
 import pickle
 import random
 import struct
+import secrets
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
