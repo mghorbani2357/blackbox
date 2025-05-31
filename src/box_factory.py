@@ -18,9 +18,7 @@ class BlackBox:
             slots_size_limit: int = float('inf'),
             compression: bool = False,
     ):
-        int_id = random.randint(0, 2 ** 256)
-        byte_id = int_id.to_bytes(32, signed=False)
-        self.id = hashlib.sha256(byte_id).hexdigest()
+        self.id = secrets.token_hex(32)
 
         self.key = key
         self.slots_count_limit = slots_count_limit
